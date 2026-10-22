@@ -7,10 +7,13 @@ Busca una o varias direcciones IP en la hoja de cálculo de "Planta de Datos"
 y muestra, para cada IP, el/los Punto(s) de Servicio (PS) cuya red de datos
 la contiene:
 
-    <IP> --> <Código PS>, <Nombre del PS>, <Dirección>, <Municipio>,
-             <Provincia>, <Código Postal>, <Coubicado>
+    Dirección IP,Código de Punto de Servicio,Nombre del PS,Dirección,Municipio,Provincia,Código Postal,Coubicado
+    10.13.2.2,AAIICC-ALM-005,CENTRO ANDALUZ DE LA FOTOGRAFIA,C/ PINTOR DIAZ MOLINA 9,...
 
-Además del listado por pantalla genera un fichero CSV con el resultado.
+La salida por pantalla es CSV separado por comas (los campos que contienen
+comas van entre comillas). Con -v se añaden las columnas del rango CIDR que
+encaja y la fila de la hoja. Una IP que no encaja sale con los campos vacíos.
+Con -o se guarda además un fichero CSV para Excel (separado por ';').
 
 Cómo se busca
 -------------
@@ -39,7 +42,6 @@ import ipaddress
 import os
 import re
 import sys
-from datetime import datetime
 
 try:
     import openpyxl
@@ -203,10 +205,12 @@ def main():
                     help="fichero con direcciones IP (se puede repetir)")
     ap.add_argument("-H", "--hoja", help=f"nombre de la hoja (por defecto '{HOJA_POR_DEFECTO}')")
     ap.add_argument("-o", "--csv",
-                    help="fichero CSV de salida (por defecto busca-en-planta_AAAAMMDD-HHMMSS.csv)")
-    ap.add_argument("--sin-csv", action="store_true", help="no generar el fichero CSV")
+                    help="guarda además el resultado en este fichero CSV (separado por ';', "
+                         "para Excel)")
     ap.add_argument("-v", "--detalle", action="store_true",
-                    help="muestra en pantalla el rango CIDR y la fila de la hoja que encajan")
+                    help="añade en pantalla las columnas del rango CIDR y la fila de la hoja")
+    ap.add_argument("--sin-cabecera", action="store_true",
+                    help="no escribe la línea de cabecera en pantalla")
     args = ap.parse_args()
 
     ips = recoger_ips(args)
@@ -215,31 +219,30 @@ def main():
 
     planta = cargar_planta(args.planta, args.hoja)
 
+    cabecera = ["Dirección IP"] + [c for _, _, c in CAMPOS] + [COLUMNA_RANGO, "Fila en la hoja"]
     filas_csv = []
     for ip in ips:
         res = buscar(ip, planta)
         if not res:
-            print(f"{ip} --> NO ENCONTRADA")
-            filas_csv.append([str(ip)] + [""] * len(CAMPOS) + ["", ""])
-            continue
-        for reg, redes, num_fila in res:
+            filas_csv.append([str(ip)] + [""] * (len(cabecera) - 1))
+        for reg, redes, fila in res:
             valores = [reg[c] for c, _, _ in CAMPOS]
-            rangos = "; ".join(str(r) for r in redes)
-            linea = f"{ip} --> {', '.join(valores)}"
-            if args.detalle:
-                linea += f"  [{rangos}, fila {num_fila}]"
-            print(linea)
-            filas_csv.append([str(ip)] + valores + [rangos, num_fila])
+            filas_csv.append([str(ip)] + valores + ["; ".join(str(r) for r in redes), fila])
 
-    if not args.sin_csv:
-        ruta = args.csv or datetime.now().strftime("busca-en-planta_%Y%m%d-%H%M%S.csv")
+    # Pantalla: CSV separado por comas; los campos con comas van entre comillas
+    n = len(cabecera) if args.detalle else len(cabecera) - 2
+    w = csv.writer(sys.stdout, lineterminator="\n")
+    if not args.sin_cabecera:
+        w.writerow(cabecera[:n])
+    w.writerows(f[:n] for f in filas_csv)
+
+    if args.csv:
         # utf-8-sig y ';' para que Excel en español lo abra directamente
-        with open(ruta, "w", newline="", encoding="utf-8-sig") as f:
+        with open(args.csv, "w", newline="", encoding="utf-8-sig") as f:
             w = csv.writer(f, delimiter=";")
-            w.writerow(["Dirección IP"] + [c for _, _, c in CAMPOS]
-                       + [COLUMNA_RANGO, "Fila en la hoja"])
+            w.writerow(cabecera)
             w.writerows(filas_csv)
-        print(f"\nCSV generado: {ruta}", file=sys.stderr)
+        print(f"CSV generado: {args.csv}", file=sys.stderr)
 
 
 if __name__ == "__main__":
